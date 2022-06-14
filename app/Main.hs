@@ -4,7 +4,7 @@ import Spidew
 import System.Console.Haskeline
 import Control.Monad.State (StateT(runStateT))
 
-main = startup >> runInputT defaultSettings (runStateT takeInputLoop "")
+main = startup >> runInputT defaultSettings (runStateT takeInputLoop "") >> pure ()
 
 startup :: IO ()
 startup = putStrLn "Welcome to SPiDew! Input your API key via \"key <key>\" and look up a \n\

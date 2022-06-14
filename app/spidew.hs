@@ -4,26 +4,20 @@
 
 module Spidew where
 
-
-
-import GHC.Base (Any)
 import System.Console.Haskeline ( getInputLine, InputT )
 import Data.Aeson ( ToJSON, FromJSON (parseJSON), withObject, (.:), encode, decode )
 import GHC.Generics ( Generic )
-import Data.Text (Text, pack)
-import qualified Data.Text.IO as TIO (putStrLn)
 import Control.Monad.Trans (lift)
-import Control.Monad
 import Network.HTTP.Simple
+    ( parseRequest, getResponseBody, httpJSON )
 import Data.Aeson.Types (Value, Parser)
 import qualified Data.ByteString.Lazy as B
-import Text.Parsec
 import Control.Monad.State
-import Control.Monad.State.Class
-import Control.Monad.State
+    ( MonadIO(liftIO), MonadTrans(lift), MonadState(get, put), StateT )
 import Data.Maybe (fromMaybe)
 import qualified Data.String as B
 import Data.List (delete)
+import System.Directory (doesFileExist)
 
 -- | Function types.
 
@@ -89,7 +83,7 @@ toMaybe k l = if k == l then Nothing else pure l
 
 -- | helpText is the text called by the help command
 
-helpText :: Text
+helpText :: String
 helpText =
     ("Welcome to SPiDeW! This application checks current stock prices and manages\n\
     \watchlists. The following is a list of commands:\n\n\
@@ -158,7 +152,7 @@ keyQuery = "&apikey="
             Inspect x -> do apiKey <- get; (inspectQuote x)
             InspectLs -> inspectL
             Key x -> put x >> liftIO (putStrLn $ "Key " <> x <> " is in use.")
-            Help -> liftIO (TIO.putStrLn helpText)
+            Help -> liftIO (putStrLn helpText)
             ) >> takeInputLoop
 
 
@@ -203,12 +197,20 @@ keyQuery = "&apikey="
 
 (createLs, addEntry, rmEntry, inspectL) = (createLs, addEntry, rmEntry, inspectL)
     where
-    --createLs u = undefined -- B.writeFile "\\watchlists\\watchlist.json" =<< (B.toStrict.encode <$> (getQuote u))
+    checkExistence = doesFileExist "watchlist.json"
+    -- | General functions for a disk-based watchlist.
     addEntry u = do
-        k <- (decode <$> B.readFile "watchlist.json") :: IO (Maybe Watchlist)
-        if elem (B.fromString u) $ watchlist (fromMaybe (Watchlist []) k)
-            then putStrLn $ u <> " is already in the watchlist."
-            else B.writeFile "store.json" $ encode $ Watchlist $ watchlist (fromMaybe (Watchlist []) k) <> [u]
+        exists <- checkExistence
+        if exists == True then
+            do
+            k <- (decode <$> B.readFile "watchlist.json") :: IO (Maybe Watchlist)
+            if elem (B.fromString u) $ watchlist (fromMaybe (Watchlist []) k)
+                then putStrLn $ u <> " is already in the watchlist."
+                else B.writeFile "watchlist.json" $ encode $ Watchlist $ watchlist (fromMaybe (Watchlist []) k) <> [u]
+        else do
+            writeFile "watchlist.json" ""
+            k <- (decode <$> B.readFile "watchlist.json") :: IO (Maybe Watchlist)
+            B.writeFile "watchlist.json" $ encode $ Watchlist $ watchlist (fromMaybe (Watchlist []) k) <> [u]
     rmEntry u = do
         k <- (decode <$> B.readFile "watchlist.json") :: IO (Maybe Watchlist)
         if elem (B.fromString u) $ watchlist (fromMaybe (Watchlist []) k)
