@@ -156,7 +156,7 @@ keyQuery = "&apikey="
             RmEntry x -> lift.lift $ rmEntry x
             --RmLs x -> pure ()
             Inspect x -> do apiKey <- get; (inspectQuote x)
-            InspectLs -> undefined
+            InspectLs -> inspectL
             Key x -> put x >> liftIO (putStrLn $ "Key " <> x <> " is in use.")
             Help -> liftIO (TIO.putStrLn helpText)
             ) >> takeInputLoop
