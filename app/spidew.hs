@@ -8,7 +8,7 @@ module Spidew where
 
 import GHC.Base (Any)
 import System.Console.Haskeline ( getInputLine, InputT )
-import Data.Aeson ( ToJSON, FromJSON (parseJSON), withObject, (.:), encode )
+import Data.Aeson ( ToJSON, FromJSON (parseJSON), withObject, (.:), encode, decode )
 import GHC.Generics ( Generic )
 import Data.Text (Text, pack)
 import qualified Data.Text.IO as TIO (putStrLn)
@@ -16,21 +16,41 @@ import Control.Monad.Trans (lift)
 import Control.Monad
 import Network.HTTP.Simple
 import Data.Aeson.Types (Value, Parser)
-import qualified Data.ByteString as B
+import qualified Data.ByteString.Lazy as B
 import Text.Parsec
 import Control.Monad.State
 import Control.Monad.State.Class
 import Control.Monad.State
+import Data.Maybe (fromMaybe)
+import qualified Data.String as B
+import Data.List (delete)
+
+-- | Function types.
+
+takeInputLoop :: SPiDeW ()
+parseInput ::  String -> Maybe Command
+executeInput :: Maybe Command -> SPiDeW ()
+
+inspectQuote :: String -> SPiDeW ()
+getQuote :: String -> SPiDeW GetInfo
+processQuote :: GetInfo -> String
+
+createLs :: String -> IO ()
+addEntry, rmEntry :: String -> IO ()
+inspectL :: SPiDeW ()
+
+-- | Type definitions
 
 
+type SPiDeW = StateT String (InputT IO)
 
 data Command = Inspect {symbol :: String}
              -- | Create {watchlist :: Text}
              | Key {key :: String}
-             | Add {watchlist :: Text, symbol :: String}
-             | RmEntry {watchlist :: Text, symbol :: String}
+             | Add {symbol :: String}
+             | RmEntry {symbol :: String}
              -- | RmLs {watchlist :: Text}
-             | InspectLs {watchlist :: Text}
+             | InspectLs
              -- | ShowLs
              | Help
              | Exit
@@ -52,18 +72,10 @@ instance FromJSON GetInfo where
     parseJSON = withObject "GetInfo" (\outerObject -> (outerObject .: "Global Quote") >>= \obj -> 
         ((GetInfo) <$> (obj .: "01. symbol") <*> (obj .: "05. price") <*> (obj .: "09. change")))
 
-takeInputLoop :: StateT String (InputT IO) ()
-parseInput ::  String -> Maybe Command
-executeInput :: Maybe Command -> StateT String (InputT IO) ()
+newtype Watchlist = Watchlist {watchlist :: [String]} deriving (Show, Generic)
 
-inspectQuote :: String -> String ->  IO ()
-getQuote :: String -> String -> IO GetInfo
-processQuote :: GetInfo -> String
-
-createLs :: String -> IO ()
-addEntry, rmEntry, rmLs :: IO ()
-
-
+instance FromJSON Watchlist
+instance ToJSON Watchlist
 
 
 -- | Helper function used to handle exceptions built into custom datatypes
@@ -111,7 +123,7 @@ keyQuery = "&apikey="
     where
     
     
-    takeInputLoop = lift (getInputLine "SPiDeW>") >>= executeInput . (>>= parseInput)
+    takeInputLoop = lift (getInputLine "SPiDeW> ") >>= executeInput . (>>= parseInput)
 
 
     -- | Splits input string based on the location of spaces, and if the format matches, converts
@@ -121,10 +133,10 @@ keyQuery = "&apikey="
         toMaybe CommandNull $ case words k of
             ("inspect":x:[]) -> Inspect x
             --("makelist":x:[]) -> Create $ pack x
-            ("add":x:y:[]) -> Add (pack x) $ y
-            ("rmentry":x:y:[]) -> RmEntry (pack x) $ y
+            ("add":x:[]) -> Add x
+            ("rmentry":x:[]) -> RmEntry x
             --("rmlist":x:[]) -> RmLs $ pack x
-            ("inspectlist":x:[]) -> InspectLs $ pack x
+            ["inspectlist"] -> InspectLs
             --["showlists"] -> ShowLs
             ("key":x:[]) -> Key x
             ["exit"] -> Exit
@@ -140,12 +152,12 @@ keyQuery = "&apikey="
         _ -> (case u of
             --ShowLs -> pure ()
             --Create x -> pure ()
-            Add x y -> pure ()
-            RmEntry x y -> pure ()
+            Add x -> lift.lift $ addEntry x
+            RmEntry x -> lift.lift $ rmEntry x
             --RmLs x -> pure ()
-            Inspect x -> do apiKey <- get; liftIO (inspectQuote x apiKey)
-            InspectLs x -> pure ()
-            Key x -> put x
+            Inspect x -> do apiKey <- get; (inspectQuote x)
+            InspectLs -> undefined
+            Key x -> put x >> liftIO (putStrLn $ "Key " <> x <> " is in use.")
             Help -> liftIO (TIO.putStrLn helpText)
             ) >> takeInputLoop
 
@@ -157,18 +169,20 @@ keyQuery = "&apikey="
 (inspectQuote, getQuote, processQuote) = (inspectQuote, getQuote,
     processQuote)
     where
-        -- | helper for processQuote
+        -- | helpers for processQuote
     calculateChange chng base = (base/(base - chng)-1)*100
+    addPlus u = if u >= 0 then "+" <> show u else show u
 
 -- | inspectQuote calls getQuote, runs processQuote on it, then prints the resulting string.
 
-    inspectQuote u apiKey = processQuote <$> getQuote u apiKey >>= putStrLn
+    inspectQuote u = processQuote <$> getQuote u >>= liftIO.putStrLn
 
 -- | getQuote, given a symbol, returns an IO Value wrapping the entry in the online
 -- database for processQuote to convert.  
 
-    getQuote u apiKey = (getResponseBody <$>) $ httpJSON =<< parseRequest 
-        ( "GET " <> apiLocation <> u <> keyQuery <> apiKey)
+    getQuote u = do
+        apiKey <- get
+        lift ((getResponseBody <$>) $ httpJSON =<< parseRequest ("GET " <> apiLocation <> u <> keyQuery <> apiKey))
 
 -- | processQuote creates a String from an Entry
 
@@ -181,16 +195,30 @@ keyQuery = "&apikey="
         <> "\nChange: "
         <> show change
         <> "\nPercent Change: "
-        <> (take 5 $ show $ calculateChange change price)
+        <> (take 5 $ addPlus $ calculateChange change price)
         <> "%\n"
     
 
 -- | Functions that create, modify, and delete an on-disk JSON database.
-(createLs, addEntry, rmEntry, rmLs) = (createLs, addEntry, rmEntry, rmLs)
+
+(createLs, addEntry, rmEntry, inspectL) = (createLs, addEntry, rmEntry, inspectL)
     where
-    createLs u = undefined -- B.writeFile "\\watchlists\\watchlist.json" =<< (B.toStrict.encode <$> (getQuote u))
-    addEntry = undefined
-    rmEntry = undefined
-    rmLs = undefined
+    --createLs u = undefined -- B.writeFile "\\watchlists\\watchlist.json" =<< (B.toStrict.encode <$> (getQuote u))
+    addEntry u = do
+        k <- (decode <$> B.readFile "watchlist.json") :: IO (Maybe Watchlist)
+        if elem (B.fromString u) $ watchlist (fromMaybe (Watchlist []) k)
+            then putStrLn $ u <> " is already in the watchlist."
+            else B.writeFile "store.json" $ encode $ Watchlist $ watchlist (fromMaybe (Watchlist []) k) <> [u]
+    rmEntry u = do
+        k <- (decode <$> B.readFile "watchlist.json") :: IO (Maybe Watchlist)
+        if elem (B.fromString u) $ watchlist (fromMaybe (Watchlist []) k)
+            then B.writeFile "store.json" $ encode $ Watchlist $ delete u $ watchlist
+            $ fromMaybe (Watchlist []) k
+            else putStrLn $ u <> " is not in the watchlist."
+    inspectL = do
+        k <- (lift.lift $ decode <$> B.readFile "watchlist.json") :: SPiDeW (Maybe Watchlist)
+        sequence $ fmap inspectQuote <$> watchlist $ fromMaybe (Watchlist []) k
+        pure ()
+        
 
 
