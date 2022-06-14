@@ -18,6 +18,7 @@ import Data.Maybe (fromMaybe)
 import qualified Data.String as B
 import Data.List (delete)
 import System.Directory (doesFileExist)
+import Control.Exception
 
 -- | Function types.
 
@@ -214,7 +215,7 @@ keyQuery = "&apikey="
     rmEntry u = do
         k <- (decode <$> B.readFile "watchlist.json") :: IO (Maybe Watchlist)
         if elem (B.fromString u) $ watchlist (fromMaybe (Watchlist []) k)
-            then B.writeFile "store.json" $ encode $ Watchlist $ delete u $ watchlist
+            then B.writeFile "watchlist.json" $ encode $ Watchlist $ delete u $ watchlist
             $ fromMaybe (Watchlist []) k
             else putStrLn $ u <> " is not in the watchlist."
     inspectL = do
