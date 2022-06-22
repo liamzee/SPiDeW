@@ -18,7 +18,6 @@ import Data.Maybe (fromMaybe)
 import qualified Data.String as B
 import Data.List (delete)
 import System.Directory (doesFileExist)
-import Control.Exception
 
 -- | Function types.
 
@@ -49,7 +48,6 @@ data Command = Inspect {symbol :: String}
              -- | ShowLs
              | Help
              | Exit
-             | CommandNull -- use only to convert to Nothing with toMaybe
              deriving Eq
 
 -- | GetInfo type used to read from webAPI
@@ -72,12 +70,8 @@ newtype Watchlist = Watchlist {watchlist :: [String]} deriving (Show, Generic)
 instance FromJSON Watchlist
 instance ToJSON Watchlist
 
-
--- | Helper function used to handle exceptions built into custom datatypes
-
-
-toMaybe :: Eq a => a -> a -> Maybe a
-toMaybe k l = if k == l then Nothing else pure l
+pMap :: (String -> b) -> Watchlist -> [b]
+pMap f (Watchlist a) = f <$> a
 
 -- | List of built-in texts, strings
 
@@ -125,18 +119,18 @@ keyQuery = "&apikey="
     -- it to a Command
 
     parseInput k = 
-        toMaybe CommandNull $ case words k of
-            ("inspect":x:[]) -> Inspect x
+        case words k of
+            ("inspect":x:[]) -> pure $ Inspect x
             --("makelist":x:[]) -> Create $ pack x
-            ("add":x:[]) -> Add x
-            ("rmentry":x:[]) -> RmEntry x
+            ("add":x:[]) -> pure $ Add x
+            ("rmentry":x:[]) -> pure $ RmEntry x
             --("rmlist":x:[]) -> RmLs $ pack x
-            ["inspectlist"] -> InspectLs
+            ["inspectlist"] -> pure $ InspectLs
             --["showlists"] -> ShowLs
-            ("key":x:[]) -> Key x
-            ["exit"] -> Exit
-            ["help"] -> Help
-            _ -> CommandNull
+            ("key":x:[]) -> pure $ Key x
+            ["exit"] -> pure Exit
+            ["help"] -> pure Help
+            _ -> Nothing
 
     -- | on Exit, gives pure (), closing the loop. Otherwise, executes some action based on the
     -- given command, then calls takeInputLoop. Technically a case of mutual recursion!
@@ -214,13 +208,13 @@ keyQuery = "&apikey="
             B.writeFile "watchlist.json" $ encode $ Watchlist $ watchlist (fromMaybe (Watchlist []) k) <> [u]
     rmEntry u = do
         k <- (decode <$> B.readFile "watchlist.json") :: IO (Maybe Watchlist)
-        if elem (B.fromString u) $ watchlist (fromMaybe (Watchlist []) k)
-            then B.writeFile "watchlist.json" $ encode $ Watchlist $ delete u $ watchlist
-            $ fromMaybe (Watchlist []) k
+        if elem (B.fromString u) $ watchlist $ fromMaybe (Watchlist []) k
+            then B.writeFile "watchlist.json" $ encode.Watchlist .delete u.watchlist.
+            fromMaybe (Watchlist []) $ k
             else putStrLn $ u <> " is not in the watchlist."
     inspectL = do
         k <- (lift.lift $ decode <$> B.readFile "watchlist.json") :: SPiDeW (Maybe Watchlist)
-        sequence $ fmap inspectQuote <$> watchlist $ fromMaybe (Watchlist []) k
+        sequence $ inspectQuote `pMap` fromMaybe (Watchlist []) k
         pure ()
         
 
